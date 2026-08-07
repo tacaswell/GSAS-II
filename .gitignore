@@ -36,6 +36,10 @@ GSASII/bin
 # Local dev env files
 .vscode
 
+# pixi environments (root-level pixi.toml)
+.pixi/envs
+*.egg-info
+
 
 dist
 build

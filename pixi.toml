@@ -1,0 +1,125 @@
+[workspace]
+authors = [
+  "Brian H. Toby <toby@anl.gov>",
+  "Robert B. Von Dreele <vondreele@anl.gov>",
+  ]
+channels = ["conda-forge"]
+description = "Structural analysis from neutron and x-ray diffraction"
+name = "GSAS-II"
+platforms = ["linux-64", "win-64", "osx-arm64", "osx-64"]
+preview = ["pixi-build"]
+
+[package]
+name = "GSAS-II"
+version = "2.0.0"
+
+[package.build]
+backend = { name = "pixi-build-python", version = "*" }
+
+[package.build.config]
+noarch = false
+installer = "pip"
+compilers = ["c", "fortran"]
+
+[package.host-dependencies]
+python = ">=3.10,<3.14"
+meson-python = ">=0.17.1,<0.18"
+ninja = ">=1.12.1,<2"
+cython = ">=3.0.11,<4"
+numpy = ">=2.2.1,<3"
+pkg-config = ">=0.29.2,<0.30"
+pyproject-metadata = ">=0.9.0,<0.10"
+tomli = ">=2.2.1,<3"
+wheel = ">=0.45.1,<0.46"
+pip = ">=24.3.1,<25"
+compilers = '*'
+
+[package.run-dependencies]
+# required (from pyproject.toml [project.dependencies])
+numpy = ">=2.2.1,<3"
+scipy = ">=1.15.0,<2"
+pycifrw = ">=4.4.0"
+# gui (from pyproject.toml [project.optional-dependencies.gui])
+wxpython = ">=4.2.2,<5"
+matplotlib-base = ">=3.10.0,<4"
+pyopengl = ">=3.1.6,<4"
+# useful (from pyproject.toml [project.optional-dependencies.useful])
+h5py = ">=3.12.1,<4"
+pillow = ">=11.1.0,<12"
+requests = ">=2.32.3,<3"
+imageio = ">=2.36.1,<3"
+zarr = ">=2.18.3,<4"
+xmltodict = ">=0.14.2,<0.15"
+seekpath = ">=2.1.0,<3"
+pybaselines = ">=1.2.0,<2"
+
+[dev]
+GSAS-II = { path = "." }
+
+
+[tasks]
+
+clean-build = { cmd = "(rm dist/*whl || true) && (rm -r build || true) " }
+build =  { cmd = "python -m build -wnx -vvvv -Cbuild-dir='build'", depends-on = ['clean-build']}
+install = { cmd = "pip install dist/*whl --force-reinstall --no-deps", depends-on=['build', 'CIFfix']}
+
+CIFfix =  { cmd = "python -c 'import CifFile'" } # This command fixes a bug in PyCifRW 4.x
+
+# following contains a rather kludgy way to get files into bin area
+install-editable =  { cmd = "pip install -ve . --no-build-isolation; /bin/cp -v $(find ./build -name convcell) .pixi/envs/$PIXI_ENVIRONMENT_NAME/bin/; /bin/cp -v $(find ./build -name LATTIC) .pixi/envs/$PIXI_ENVIRONMENT_NAME/bin/", depends-on=['clean-build', 'CIFfix']}
+install-editable-win =  { cmd = "pip install -ve . --no-build-isolation; cp ./build/*/sources/LATTIC.exe .pixi/envs/*/Scripts/; cp ./build/*/sources/convcell.exe .pixi/envs/*/Scripts/; ls; ls -d .pixi/envs/*/Scripts/*.exe", depends-on=['clean-build', 'CIFfix']}
+
+build-and-go ={ depends-on= ["install", "ui"]}
+#build-and-go-win ={ depends-on= ["install-win", "ui"]}
+
+test = {cmd = "python -m pytest ." }
+
+ui = 'GSASII_NOPATHHACKING="true" python -m GSASII'
+
+[dependencies]
+# dev/test only - not declared in any [package.*-dependencies] table
+pytest = ">=8.3.4,<9"
+gitpython = ">=3.1.44,<4"
+ipython = ">=8.32.0,<9"
+
+# for now assume gcc & gfortran already installed in Linux
+# compilers flow into the workspace env via [dev] -> [package.*.host-dependencies]
+# TODO: migrate to [package.host-dependencies."if(host_platform == 'win-64')"] once pixi parser supports it
+# [package.target.win-64.host-dependencies]
+# gfortran = ">=14.2.0,<14.3"
+# gcc = ">=14.2.0,<14.3"
+#
+# [package.target.osx-arm64.host-dependencies]
+# compilers = ">=1.11.0,<2"
+#
+# [package.target.osx-64.host-dependencies]
+# compilers = ">=1.11.0,<2"
+#
+# dependencies removed to switch to gcc/gfortran:
+#    compilers = ">=1.8.0,<2"
+#    clang = ">=17.0.6,<20"
+# also, the following has windows commands that build with lang, which
+# does not [yet?] work for GSAS-II binaries
+#build-win =  { cmd = "python -m build -wnx -vvvv -Cbuild-dir='build'", depends-on = ['clean-build'] , env={CC = 'clang-cl', CXX ='clang-cl'}}
+#install-win = { cmd = "pip install dist/*whl --force-reinstall --no-deps", depends-on=['build-win']}
+#install-editable-win =  { cmd = "pip install -ve . --no-build-isolation" , depends-on=['clean-build'] , env={CC = 'clang-cl', CXX ='clang-cl'}}
+#
+# TODO? separate runtime & build/install dependencies
+
+[feature.py311.dependencies]
+python = "<3.12,>=3.11"
+
+[feature.py312.dependencies]
+python = "<3.13,>=3.12"
+
+[feature.py313.dependencies]
+python = "<3.14,>=3.13"
+
+[feature.py310.dependencies]
+python = "<3.11,>=3.10"
+
+[environments]
+py310 = ['py310']
+py311 = ['py311']
+py312 = ['py312']
+py313 = ['py313']
