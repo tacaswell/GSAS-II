@@ -112,7 +112,13 @@ install-editable-win =  { cmd = "pip install -ve . --no-build-isolation; cp ./bu
 build-and-go ={ depends-on= ["install", "ui"]}
 #build-and-go-win ={ depends-on= ["install-win", "ui"]}
 
-test = {cmd = "python -m pytest ." }
+# Run the test suite from the tests/ directory against the *installed* wheel.
+# depends-on 'install' builds + installs the wheel first so the compiled
+# Fortran/C extensions (pyspg, pydiffax, ...) are present.  cwd = "tests" makes
+# `import GSASII` resolve to the installed package in site-packages instead of
+# the un-compiled source tree at the repo root, which would otherwise shadow it
+# and fail with "name 'pyspg' is not defined".
+test = { cmd = "python -m pytest .", cwd = "tests", depends-on = ['install'] }
 
 ui = 'GSASII_NOPATHHACKING="true" python -m GSASII'
 
