@@ -9,18 +9,6 @@ name = "GSAS-II"
 platforms = ["linux-64", "win-64", "osx-arm64", "osx-64"]
 preview = ["pixi-build"]
 
-# On Windows, override the pixi-build compiler variants so the `compilers`
-# config (see [package.build.config]) resolves to the self-contained LLVM
-# toolchain — flang (flang-new) for Fortran and clang-cl for C/C++ — instead of
-# the pixi-build defaults (which would try to use vs/MSVC for Fortran).  This
-# matches conda-forge's scipy toolchain.  clang-cl's lld-link can consume the
-# GNU-style (.a) static archives that flang's llvm-ar produces, whereas MSVC's
-# link.exe cannot (it fails with LNK1107 on .a files).
-[workspace.target.win-64.build-variants]
-c_compiler = ["clang"]
-cxx_compiler = ["clang"]
-fortran_compiler = ["flang"]
-
 [package]
 name = "GSAS-II"
 version = "2.0.0"
@@ -31,13 +19,26 @@ backend = { name = "pixi-build-python", version = "*" }
 [package.build.config]
 noarch = false
 installer = "pip"
-# Select compilers via conda-forge's compiler infrastructure.  The build
-# variants below (see [workspace.target.win-64.build-variants]) pin the Windows
-# toolchain to flang (Fortran) + clang-cl (C/C++) — the same self-contained
-# LLVM toolchain conda-forge uses for scipy — so GSAS-II fits cleanly into the
-# conda-forge ecosystem.  On Linux/macOS this resolves to the default
-# gcc/gfortran (Linux) and clang/gfortran (macOS) toolchains.
-compilers = ["c", "cxx", "fortran"]
+# Linux/macOS: select compilers through conda-forge's compiler infrastructure.
+# compiler('c') resolves to gcc (Linux) / clang (macOS) and compiler('fortran')
+# to gfortran — the correct platform defaults.  (No C++ sources, so no 'cxx'.)
+compilers = ["c", "fortran"]
+
+# Windows: do NOT use the variant-driven compiler() mechanism here.  The
+# compiler *variant* is chosen by the consuming workspace, so a downstream
+# project that builds GSAS-II via pixi-build would get pixi-build's Windows
+# default (MSVC), whose link.exe cannot read the GNU-style (.a) static archives
+# that flang's llvm-ar produces (fails with LNK1107).  Instead we pin the LLVM
+# toolchain directly as build dependencies (see
+# [package.build-dependencies] with the win-64 host_platform guard below);
+# their conda activation scripts
+# export FC=flang / CC=clang / AR=llvm-ar / LD=lld-link plus the matching
+# FFLAGS/LDFLAGS.  This keeps the Windows build self-contained and independent
+# of the consumer's compiler variant, so GSAS-II builds with flang/clang no
+# matter which workspace drives the pixi-build.
+[package.build.target.win-64.config]
+noarch = false
+compilers = []
 
 [package.host-dependencies]
 python = ">=3.10,<3.14"
@@ -50,6 +51,16 @@ pyproject-metadata = ">=0.9.0,<0.10"
 tomli = ">=2.2.1,<3"
 wheel = ">=0.45.1,<0.46"
 pip = ">=24.3.1,<25"
+
+# Windows LLVM toolchain, pinned as build dependencies so the compiler choice
+# travels with the package (see the [package.build.target.win-64.config]
+# comment).  These conda-forge activation packages export FC=flang, CC=clang,
+# AR=llvm-ar, LD=lld-link and the required FFLAGS/LDFLAGS during the build, so
+# GSAS-II builds with the self-contained LLVM toolchain regardless of the
+# consuming workspace's compiler variant.
+[package.build-dependencies."if(host_platform == 'win-64')"]
+flang_win-64 = "*"
+clang_win-64 = "*"
 
 [package.run-dependencies]
 # required (from pyproject.toml [project.dependencies])
