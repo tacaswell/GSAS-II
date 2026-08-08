@@ -9,6 +9,18 @@ name = "GSAS-II"
 platforms = ["linux-64", "win-64", "osx-arm64", "osx-64"]
 preview = ["pixi-build"]
 
+# On Windows, override the pixi-build compiler variants so the `compilers`
+# config (see [package.build.config]) resolves to the self-contained LLVM
+# toolchain — flang (flang-new) for Fortran and clang-cl for C/C++ — instead of
+# the pixi-build defaults (which would try to use vs/MSVC for Fortran).  This
+# matches conda-forge's scipy toolchain.  clang-cl's lld-link can consume the
+# GNU-style (.a) static archives that flang's llvm-ar produces, whereas MSVC's
+# link.exe cannot (it fails with LNK1107 on .a files).
+[workspace.target.win-64.build-variants]
+c_compiler = ["clang"]
+cxx_compiler = ["clang"]
+fortran_compiler = ["flang"]
+
 [package]
 name = "GSAS-II"
 version = "2.0.0"
@@ -19,9 +31,13 @@ backend = { name = "pixi-build-python", version = "*" }
 [package.build.config]
 noarch = false
 installer = "pip"
-# Do not use `compilers` here — that would auto-inject vs2022 (MSVC) on Windows which
-# requires a system-level Visual Studio install.  All compilers are provided explicitly
-# via [package.host-dependencies] below (gcc/gfortran on Win/Linux, compilers on macOS).
+# Select compilers via conda-forge's compiler infrastructure.  The build
+# variants below (see [workspace.target.win-64.build-variants]) pin the Windows
+# toolchain to flang (Fortran) + clang-cl (C/C++) — the same self-contained
+# LLVM toolchain conda-forge uses for scipy — so GSAS-II fits cleanly into the
+# conda-forge ecosystem.  On Linux/macOS this resolves to the default
+# gcc/gfortran (Linux) and clang/gfortran (macOS) toolchains.
+compilers = ["c", "cxx", "fortran"]
 
 [package.host-dependencies]
 python = ">=3.10,<3.14"
@@ -34,20 +50,6 @@ pyproject-metadata = ">=0.9.0,<0.10"
 tomli = ">=2.2.1,<3"
 wheel = ">=0.45.1,<0.46"
 pip = ">=24.3.1,<25"
-
-[package.host-dependencies."if(host_platform == 'win-64')"]
-gfortran = "*"
-gcc = "*"
-
-[package.host-dependencies."if(host_platform == 'linux-64')"]
-gfortran = "*"
-gcc = "*"
-
-[package.host-dependencies."if(host_platform == 'osx-arm64')"]
-compilers = ">=1.9.0,<2"
-
-[package.host-dependencies."if(host_platform == 'osx-64')"]
-compilers = ">=1.9.0,<2"
 
 [package.run-dependencies]
 # required (from pyproject.toml [project.dependencies])
@@ -68,19 +70,17 @@ xmltodict = ">=0.14.2,<0.15"
 seekpath = ">=2.1.0,<3"
 pybaselines = ">=1.2.0,<2"
 
-# MinGW runtime libraries needed at *run* time by the compiled Fortran/C
-# extensions.  GSAS-II is built with the conda-forge gcc/gfortran toolchain
-# (see [package.host-dependencies] above), so the resulting .pyd/.so files link
-# against libgfortran/libgcc/libquadmath (+ libwinpthread on Windows).  These
-# must be explicit run-dependencies: pixi-build does not propagate the
-# compilers' run-exports, so without these a consumer environment (e.g. a
-# downstream pixi-build project depending on GSAS-II) installs GSAS-II without
-# the runtime DLLs and fails with "DLL load failed while importing pyspg".
-[package.run-dependencies."if(host_platform == 'win-64')"]
-libgcc = "*"
-libgfortran5 = "*"
-libwinpthread = "*"
-
+# Runtime libraries needed by the compiled Fortran/C extensions.
+#
+# On Windows the LLVM flang toolchain *statically* links the Fortran runtime
+# into each .pyd (verified with dumpbin: the extensions import only
+# python3xx.dll, VCRUNTIME140.dll and the UCRT, all already pulled in by
+# python), so no extra Fortran-runtime run-dependency is required there.
+#
+# On Linux/macOS gfortran links libgfortran dynamically, so those runtimes must
+# be explicit run-dependencies: pixi-build does not propagate the compilers'
+# run-exports, so without them a consumer environment installs GSAS-II without
+# the runtime libraries and fails to import the extensions.
 [package.run-dependencies."if(host_platform == 'linux-64')"]
 libgcc-ng = "*"
 libgfortran5 = "*"
@@ -101,9 +101,6 @@ clean-build = { cmd = "(rm dist/*whl || true) && (rm -r build || true) " }
 build =  { cmd = "python -m build -wnx -vvvv -Cbuild-dir='build'", depends-on = ['clean-build']}
 
 [target.win-64.tasks]
-# Override CC to gcc so gfortran and gcc share the same MinGW toolchain;
-# the vs2022 activation sets CC=cl.exe which is incompatible with gfortran's .a archives.
-build = { cmd = "python -m build -wnx -vvvv -Cbuild-dir='build'", depends-on = ['clean-build'], env = { CC = "gcc", CXX = "g++", FC = "gfortran" }}
 install = { cmd = "pip install dist/*whl --force-reinstall --no-deps", depends-on=['build', 'CIFfix']}
 
 CIFfix =  { cmd = "python -c 'import CifFile'" } # This command fixes a bug in PyCifRW 4.x
@@ -119,15 +116,31 @@ test = {cmd = "python -m pytest ." }
 
 ui = 'GSASII_NOPATHHACKING="true" python -m GSASII'
 
+# Pull in the conda-forge compiler *activation* packages for the dev/build
+# environment.  These provide flang (Fortran) + clang (C/C++) together with the
+# activate.d scripts that export the correct FC/CC/FFLAGS/LDFLAGS (e.g.
+# -nostdlib -fms-runtime-lib=dll -fuse-ld=lld and the clang_rt.builtins default
+# lib).  Without them `pixi run build` links flang's Fortran objects without the
+# runtime flags and fails with "could not open 'flang_rt.runtime.dynamic.lib'".
+# This mirrors the toolchain the pixi-build package build gets from the
+# `compilers` config, so the workspace wheel build and the conda package build
+# use the same self-contained LLVM toolchain.
+[target.win-64.dependencies]
+flang_win-64 = "*"
+clang_win-64 = "*"
+
 [dependencies]
 # dev/test only - not declared in any [package.*-dependencies] table
 pytest = ">=8.3.4,<9"
 gitpython = ">=3.1.44,<4"
 ipython = ">=8.32.0,<9"
 python-build = ">=1.5.0,<2"
-
-# compilers flow into the workspace env via [dev] -> [package.target.*.host-dependencies]
-# Use gfortran/gcc on Windows and Linux; compilers metapackage on macOS
+# Force numpy/scipy onto OpenBLAS in the dev env.  Adding the flang/clang
+# toolchain (compilers, clang) otherwise lets the solver pull MKL, whose Intel
+# OpenMP runtime conflicts with the llvm-openmp shipped by flang and crashes
+# numpy.linalg in this environment.  OpenBLAS is conda-forge's default and has
+# no such conflict.
+libblas = { version = "*", build = "*openblas" }
 
 [feature.py311.dependencies]
 python = "<3.12,>=3.11"
