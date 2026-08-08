@@ -52,11 +52,6 @@ endif
 # The chdir is needed because within numpy there's an `import signal`
 # statement, and we don't want that to pick up scipy's signal module rather
 # than the stdlib module. The try-except is needed because when things are
-# split across drives on Windows, there is no relative path and an exception
-# gets raised. There may be other such cases, so add a catch-all and switch to
-# an absolute path. Relative paths are needed when for example a virtualenv is
-# placed inside the source tree; Meson rejects absolute paths to places inside
-# the source tree.
 # For cross-compilation it is often not possible to run the Python interpreter
 # in order to retrieve numpy's include directory. It can be specified in the
 # cross file instead:
@@ -64,54 +59,56 @@ endif
 #   numpy-include-dir = /abspath/to/host-pythons/site-packages/numpy/core/include
 #
 # This uses the path as is, and avoids running the interpreter.
+#
+# We deliberately use an *absolute* numpy include path here (rather than the
+# relative one that upstream scipy computes with os.path.relpath).  On Windows,
+# a relative include path can become very long when the project is built in a
+# deeply-nested location -- for example when GSAS-II is built as a pixi-build
+# git dependency, where the source lives in the rattler git cache while numpy
+# lives in the build's host prefix.  In that situation the relative `-I` path
+# walks all the way up to a common ancestor and back down again, and the
+# resulting path for deeply-included headers (e.g. numpy/_public_dtype_api_table.h,
+# which is included from numpy/__multiarray_api.h) overflows the 260-character
+# Windows MAX_PATH limit.  gcc then reports a spurious "No such file or
+# directory" for a header that is actually present.  An absolute path keeps
+# every include comfortably under MAX_PATH.
+#
+# `include_directories()` rejects absolute paths, so the numpy/f2py include
+# directories are passed to the compiler directly as `-I` arguments below.
 incdir_numpy = meson.get_external_property('numpy-include-dir', 'not-given')
 if incdir_numpy == 'not-given'
   incdir_numpy = run_command(py,
-    [
-      '-c',
-      '''import os
-import numpy as np
-try:
-  incdir = os.path.relpath(np.get_include())
-except Exception:
-  incdir = np.get_include()
-print(incdir)
-  '''
-    ],
+    ['-c', 'import numpy; print(numpy.get_include())'],
     check: true
   ).stdout().strip()
-
-  # We do need an absolute path to feed to `cc.find_library` below
-  _incdir_numpy_abs = run_command(py,
-    ['-c', 'import os; os.chdir(".."); import numpy; print(numpy.get_include())'],
-    check: true
-  ).stdout().strip()
-else
-  _incdir_numpy_abs = incdir_numpy
 endif
-inc_np = include_directories(incdir_numpy)
+
+incdir_f2py = incdir_numpy / '..' / '..' / 'f2py' / 'src'
+
 # Don't use the deprecated NumPy C API. Define this to a fixed version instead of
 # NPY_API_VERSION in order not to break compilation for released SciPy versions
 # when NumPy introduces a new deprecation.
 numpy_nodepr_api = ['-DNPY_NO_DEPRECATED_API=NPY_1_9_API_VERSION']
-np_dep = declare_dependency(include_directories: inc_np, compile_args: numpy_nodepr_api)
 
-incdir_f2py = incdir_numpy / '..' / '..' / 'f2py' / 'src'
-inc_f2py = include_directories(incdir_f2py)
+# Absolute numpy/f2py include dirs, fed to the compiler as `-I` args to avoid
+# the Windows MAX_PATH overflow described above.
+numpy_inc_args = ['-I' + incdir_numpy, '-I' + incdir_f2py]
+
+np_dep = declare_dependency(compile_args: numpy_nodepr_api + ['-I' + incdir_numpy])
+
 fortranobject_c = incdir_f2py / 'fortranobject.c'
 
 
 # Share this object across multiple modules.
 fortranobject_lib = static_library('_fortranobject',
   fortranobject_c,
-  c_args: numpy_nodepr_api,
+  c_args: numpy_nodepr_api + numpy_inc_args,
   dependencies: py_dep,
-  include_directories: [inc_np, inc_f2py],
   gnu_symbol_visibility: 'hidden',
 )
 fortranobject_dep = declare_dependency(
   link_with: fortranobject_lib,
-  include_directories: [inc_np, inc_f2py],
+  compile_args: numpy_inc_args,
 )
 
 
