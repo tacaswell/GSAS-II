@@ -19,7 +19,9 @@ backend = { name = "pixi-build-python", version = "*" }
 [package.build.config]
 noarch = false
 installer = "pip"
-compilers = ["c", "fortran"]
+# Do not use `compilers` here — that would auto-inject vs2022 (MSVC) on Windows which
+# requires a system-level Visual Studio install.  All compilers are provided explicitly
+# via [package.host-dependencies] below (gcc/gfortran on Win/Linux, compilers on macOS).
 
 [package.host-dependencies]
 python = ">=3.10,<3.14"
@@ -32,7 +34,20 @@ pyproject-metadata = ">=0.9.0,<0.10"
 tomli = ">=2.2.1,<3"
 wheel = ">=0.45.1,<0.46"
 pip = ">=24.3.1,<25"
-compilers = '*'
+
+[package.host-dependencies."if(host_platform == 'win-64')"]
+gfortran = "*"
+gcc = "*"
+
+[package.host-dependencies."if(host_platform == 'linux-64')"]
+gfortran = "*"
+gcc = "*"
+
+[package.host-dependencies."if(host_platform == 'osx-arm64')"]
+compilers = ">=1.9.0,<2"
+
+[package.host-dependencies."if(host_platform == 'osx-64')"]
+compilers = ">=1.9.0,<2"
 
 [package.run-dependencies]
 # required (from pyproject.toml [project.dependencies])
@@ -61,6 +76,11 @@ GSAS-II = { path = "." }
 
 clean-build = { cmd = "(rm dist/*whl || true) && (rm -r build || true) " }
 build =  { cmd = "python -m build -wnx -vvvv -Cbuild-dir='build'", depends-on = ['clean-build']}
+
+[target.win-64.tasks]
+# Override CC to gcc so gfortran and gcc share the same MinGW toolchain;
+# the vs2022 activation sets CC=cl.exe which is incompatible with gfortran's .a archives.
+build = { cmd = "python -m build -wnx -vvvv -Cbuild-dir='build'", depends-on = ['clean-build'], env = { CC = "gcc", CXX = "g++", FC = "gfortran" }}
 install = { cmd = "pip install dist/*whl --force-reinstall --no-deps", depends-on=['build', 'CIFfix']}
 
 CIFfix =  { cmd = "python -c 'import CifFile'" } # This command fixes a bug in PyCifRW 4.x
@@ -81,30 +101,10 @@ ui = 'GSASII_NOPATHHACKING="true" python -m GSASII'
 pytest = ">=8.3.4,<9"
 gitpython = ">=3.1.44,<4"
 ipython = ">=8.32.0,<9"
+python-build = ">=1.5.0,<2"
 
-# for now assume gcc & gfortran already installed in Linux
-# compilers flow into the workspace env via [dev] -> [package.*.host-dependencies]
-# TODO: migrate to [package.host-dependencies."if(host_platform == 'win-64')"] once pixi parser supports it
-# [package.target.win-64.host-dependencies]
-# gfortran = ">=14.2.0,<14.3"
-# gcc = ">=14.2.0,<14.3"
-#
-# [package.target.osx-arm64.host-dependencies]
-# compilers = ">=1.11.0,<2"
-#
-# [package.target.osx-64.host-dependencies]
-# compilers = ">=1.11.0,<2"
-#
-# dependencies removed to switch to gcc/gfortran:
-#    compilers = ">=1.8.0,<2"
-#    clang = ">=17.0.6,<20"
-# also, the following has windows commands that build with lang, which
-# does not [yet?] work for GSAS-II binaries
-#build-win =  { cmd = "python -m build -wnx -vvvv -Cbuild-dir='build'", depends-on = ['clean-build'] , env={CC = 'clang-cl', CXX ='clang-cl'}}
-#install-win = { cmd = "pip install dist/*whl --force-reinstall --no-deps", depends-on=['build-win']}
-#install-editable-win =  { cmd = "pip install -ve . --no-build-isolation" , depends-on=['clean-build'] , env={CC = 'clang-cl', CXX ='clang-cl'}}
-#
-# TODO? separate runtime & build/install dependencies
+# compilers flow into the workspace env via [dev] -> [package.target.*.host-dependencies]
+# Use gfortran/gcc on Windows and Linux; compilers metapackage on macOS
 
 [feature.py311.dependencies]
 python = "<3.12,>=3.11"
