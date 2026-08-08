@@ -68,6 +68,29 @@ xmltodict = ">=0.14.2,<0.15"
 seekpath = ">=2.1.0,<3"
 pybaselines = ">=1.2.0,<2"
 
+# MinGW runtime libraries needed at *run* time by the compiled Fortran/C
+# extensions.  GSAS-II is built with the conda-forge gcc/gfortran toolchain
+# (see [package.host-dependencies] above), so the resulting .pyd/.so files link
+# against libgfortran/libgcc/libquadmath (+ libwinpthread on Windows).  These
+# must be explicit run-dependencies: pixi-build does not propagate the
+# compilers' run-exports, so without these a consumer environment (e.g. a
+# downstream pixi-build project depending on GSAS-II) installs GSAS-II without
+# the runtime DLLs and fails with "DLL load failed while importing pyspg".
+[package.run-dependencies."if(host_platform == 'win-64')"]
+libgcc = "*"
+libgfortran5 = "*"
+libwinpthread = "*"
+
+[package.run-dependencies."if(host_platform == 'linux-64')"]
+libgcc-ng = "*"
+libgfortran5 = "*"
+
+[package.run-dependencies."if(host_platform == 'osx-arm64')"]
+libgfortran5 = "*"
+
+[package.run-dependencies."if(host_platform == 'osx-64')"]
+libgfortran5 = "*"
+
 [dev]
 GSAS-II = { path = "." }
 
